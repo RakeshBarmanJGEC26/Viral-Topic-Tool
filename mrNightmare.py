@@ -1,228 +1,124 @@
 import streamlit as st
-
 import requests
+import re
 
-from datetime import datetime, timedelta
-
-
+# ==============================
 # YouTube API Key
-
+# ==============================
 API_KEY = "AIzaSyCC_B5qrb2wibpaNIKtIHqUKv4VXqe0tnw"
 
-YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
+SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
+VIDEO_URL = "https://www.googleapis.com/youtube/v3/videos"
+CHANNEL_URL = "https://www.googleapis.com/youtube/v3/channels"
 
-YOUTUBE_VIDEO_URL = "https://www.googleapis.com/youtube/v3/videos"
-
-YOUTUBE_CHANNEL_URL = "https://www.googleapis.com/youtube/v3/channels"
-
-
-# Streamlit App Title
-
-st.title("YouTube Viral Topics Tool")
-
-
-# Input Fields
-
-days = st.number_input("Enter Days to Search (1-30):", min_value=1, max_value=30, value=5)
-
-
-# List of broader keywords (USA horror audience like Mr Nightmare)
+# ==============================
+# Streamlit App
+# ==============================
+st.set_page_config(page_title="YouTube Long-Form Finder", layout="wide")
+st.title("🔥 Long-Form Viral YouTube Videos (English Bias)")
 
 keywords = [
-
-    "true horror stories usa",
-    "american horror stories",
-    "real scary stories usa",
-    "true scary stories american",
-    "real life horror stories usa",
-    "scary stories to fall asleep to",
-    "horror story narration",
-    "american ghost stories",
-    "real ghost stories usa",
-    "paranormal encounters usa",
-    "true paranormal stories america",
-    "unsolved mysteries usa horror",
-    "american urban legends",
-    "creepy true stories usa",
-    "night horror stories usa",
-    "scary stories narrated",
-    "true crime horror usa",
-    "home invasion horror stories usa",
-    "real encounters horror usa",
-    "terrifying true stories america"
-
+    "scary stories",
+    "horror stories",
+    "true scary stories",
+    "scary story compilation",
+    "night horror stories",
+    "airbnb horror stories",
+    "hotel horror stories",
+    "camping true horror stories",
+    "disturbing true stories"
 ]
 
+# ==============================
+# Duration Converter
+# ==============================
+def duration_to_seconds(duration):
+    match = re.match(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?', duration)
+    h = int(match.group(1)) if match.group(1) else 0
+    m = int(match.group(2)) if match.group(2) else 0
+    s = int(match.group(3)) if match.group(3) else 0
+    return h * 3600 + m * 60 + s
 
-# Fetch Data Button
-
-if st.button("Fetch Data"):
-
+# ==============================
+# Fetch Button
+# ==============================
+if st.button("🚀 Fetch Long-Form Videos"):
     try:
-
-        # Calculate date range
-
-        start_date = (datetime.utcnow() - timedelta(days=int(days))).isoformat("T") + "Z"
-
-        all_results = []
-
-
-        # Iterate over the list of keywords
+        results = []
 
         for keyword in keywords:
+            st.write(f"🔍 Searching: **{keyword}**")
 
-            st.write(f"Searching for keyword: {keyword}")
-
-
-            # Define search parameters
-
+            # 🔥 KEY FIX IS HERE
             search_params = {
-
                 "part": "snippet",
-
                 "q": keyword,
-
                 "type": "video",
-
                 "order": "viewCount",
-
-                "publishedAfter": start_date,
-
-                "maxResults": 5,
-
-                "key": API_KEY,
-
+                "videoDuration": "long",     # ✅ THIS SOLVES EVERYTHING
+                "maxResults": 25,
+                "relevanceLanguage": "en",
+                "key": API_KEY
             }
 
-
-            # Fetch video data
-
-            response = requests.get(YOUTUBE_SEARCH_URL, params=search_params)
-
-            data = response.json()
-
-
-            # Check if "items" key exists
-
-            if "items" not in data or not data["items"]:
-
-                st.warning(f"No videos found for keyword: {keyword}")
-
+            search_data = requests.get(SEARCH_URL, params=search_params).json()
+            if "items" not in search_data or not search_data["items"]:
                 continue
 
+            video_ids = [i["id"]["videoId"] for i in search_data["items"]]
+            channel_ids = [i["snippet"]["channelId"] for i in search_data["items"]]
 
-            videos = data["items"]
+            video_data = requests.get(
+                VIDEO_URL,
+                params={
+                    "part": "contentDetails,statistics",
+                    "id": ",".join(video_ids),
+                    "key": API_KEY
+                }
+            ).json()
 
-            video_ids = [video["id"]["videoId"] for video in videos if "id" in video and "videoId" in video["id"]]
+            channel_data = requests.get(
+                CHANNEL_URL,
+                params={
+                    "part": "statistics",
+                    "id": ",".join(channel_ids),
+                    "key": API_KEY
+                }
+            ).json()
 
-            channel_ids = [video["snippet"]["channelId"] for video in videos if "snippet" in video and "channelId" in video["snippet"]]
+            for i in range(min(len(video_data["items"]), len(channel_data["items"]))):
+                v = video_data["items"][i]
+                c = channel_data["items"][i]
 
+                duration_sec = duration_to_seconds(v["contentDetails"]["duration"])
 
-            if not video_ids or not channel_ids:
+                # Extra safety (optional)
+                if duration_sec < 120:
+                    continue
 
-                st.warning(f"Skipping keyword: {keyword} due to missing video/channel data.")
+                results.append({
+                    "Title": search_data["items"][i]["snippet"]["title"],
+                    "URL": f"https://www.youtube.com/watch?v={video_ids[i]}",
+                    "Views": int(v["statistics"].get("viewCount", 0)),
+                    "Subscribers": int(c["statistics"].get("subscriberCount", 0)),
+                    "Duration (min)": round(duration_sec / 60, 2)
+                })
 
-                continue
+        results = sorted(results, key=lambda x: x["Views"], reverse=True)
 
-
-            # Fetch video statistics
-
-            stats_params = {"part": "statistics", "id": ",".join(video_ids), "key": API_KEY}
-
-            stats_response = requests.get(YOUTUBE_VIDEO_URL, params=stats_params)
-
-            stats_data = stats_response.json()
-
-
-            if "items" not in stats_data or not stats_data["items"]:
-
-                st.warning(f"Failed to fetch video statistics for keyword: {keyword}")
-
-                continue
-
-
-            # Fetch channel statistics
-
-            channel_params = {"part": "statistics", "id": ",".join(channel_ids), "key": API_KEY}
-
-            channel_response = requests.get(YOUTUBE_CHANNEL_URL, params=channel_params)
-
-            channel_data = channel_response.json()
-
-
-            if "items" not in channel_data or not channel_data["items"]:
-
-                st.warning(f"Failed to fetch channel statistics for keyword: {keyword}")
-
-                continue
-
-
-            stats = stats_data["items"]
-
-            channels = channel_data["items"]
-
-
-            # Collect results
-
-            for video, stat, channel in zip(videos, stats, channels):
-
-                title = video["snippet"].get("title", "N/A")
-
-                description = video["snippet"].get("description", "")[:200]
-
-                video_url = f"https://www.youtube.com/watch?v={video['id']['videoId']}"
-
-                views = int(stat["statistics"].get("viewCount", 0))
-
-                subs = int(channel["statistics"].get("subscriberCount", 0))
-
-
-                if subs < 3000:  # Only include channels with fewer than 3,000 subscribers
-
-                    all_results.append({
-
-                        "Title": title,
-
-                        "Description": description,
-
-                        "URL": video_url,
-
-                        "Views": views,
-
-                        "Subscribers": subs
-
-                    })
-
-
-        # Display results
-
-        if all_results:
-
-            st.success(f"Found {len(all_results)} results across all keywords!")
-
-            for result in all_results:
-
+        if results:
+            st.success(f"🔥 Found {len(results)} LONG-FORM videos")
+            for r in results:
                 st.markdown(
-
-                    f"**Title:** {result['Title']}  \n"
-
-                    f"**Description:** {result['Description']}  \n"
-
-                    f"**URL:** [Watch Video]({result['URL']})  \n"
-
-                    f"**Views:** {result['Views']}  \n"
-
-                    f"**Subscribers:** {result['Subscribers']}"
-
+                    f"### {r['Title']}\n"
+                    f"🕒 **Duration:** {r['Duration (min)']} min  \n"
+                    f"👁 **Views:** {r['Views']:,}  \n"
+                    f"👥 **Subscribers:** {r['Subscribers']:,}  \n"
+                    f"🔗 [Watch Video]({r['URL']})"
                 )
-
                 st.write("---")
-
         else:
-
-            st.warning("No results found for channels with fewer than 3,000 subscribers.")
-
+            st.warning("❌ No long-form videos found.")
 
     except Exception as e:
-
-        st.error(f"An error occurred: {e}")
+        st.error(f"Error: {e}")
